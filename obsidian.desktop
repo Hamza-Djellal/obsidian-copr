@@ -1,0 +1,16 @@
+[Desktop Entry]
+Name=Obsidian
+Comment=A powerful knowledge base on top of local Markdown files
+Exec=obsidian %U
+Terminal=false
+Type=Application
+Icon=obsidian
+StartupWMClass=obsidian
+Categories=Office;WordProcessor;
+MimeType=text/markdown;x-scheme-handler/obsidian;
+Keywords=obsidian;markdown;notes;pkm;knowledge;
+Actions=NewWindow;
+
+[Desktop Action NewWindow]
+Name=Open a new window
+Exec=obsidian --new-window %U

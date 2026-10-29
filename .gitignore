@@ -1,0 +1,10 @@
+# RPM build artifacts
+rpmbuild/
+*.tar.gz
+*.rpm
+*.srpm
+
+# System artifacts
+.DS_Store
+*~
+*.swp

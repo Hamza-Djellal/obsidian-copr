@@ -1,0 +1,61 @@
+name: Check for New Obsidian Release
+
+on:
+  schedule:
+    # Run once every 24 hours at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check latest Obsidian release
+        id: check_release
+        run: |
+          LATEST_TAG=$(curl -s https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
+          CURRENT_VERSION=$(grep -E '^Version:' obsidian.spec | awk '{print $2}')
+
+          echo "Latest upstream version: ${LATEST_TAG}"
+          echo "Current spec version:    ${CURRENT_VERSION}"
+
+          if [ -n "${LATEST_TAG}" ] && [ "${LATEST_TAG}" != "${CURRENT_VERSION}" ]; then
+            echo "new_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "new_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update spec file
+        if: steps.check_release.outputs.new_release == 'true'
+        env:
+          NEW_VERSION: ${{ steps.check_release.outputs.version }}
+        run: |
+          sed -i "s/^Version:.*/Version:        ${NEW_VERSION}/" obsidian.spec
+          sed -i "s/^Release:.*/Release:        1%{?dist}/" obsidian.spec
+
+          DATE_STR=$(date "+%a %b %d %Y")
+          CHANGELOG_ENTRY="* ${DATE_STR} Automation <bot@example.com> - ${NEW_VERSION}-1\n- Update to upstream Obsidian ${NEW_VERSION}"
+
+          sed -i "/%changelog/a ${CHANGELOG_ENTRY}" obsidian.spec
+
+      - name: Commit and push changes
+        if: steps.check_release.outputs.new_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add obsidian.spec
+          git commit -m "chore(release): bump Obsidian to v${{ steps.check_release.outputs.version }}"
+          git push
+
+          # Explicitly trigger the Build workflow
+          gh workflow run build-rpm.yml --ref main

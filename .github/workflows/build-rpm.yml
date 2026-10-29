@@ -1,0 +1,158 @@
+name: Build RPM & Copr CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      copr_build:
+        description: 'Submit SRPM to Fedora Copr'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-rpm:
+    name: Build SRPM & Binary RPM
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Install RPM build tools
+        run: |
+          dnf install -y \
+            rpm-build \
+            rpmdevtools \
+            desktop-file-utils \
+            curl \
+            git \
+            findutils \
+            tar \
+            gzip
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Mark workspace as safe git directory
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Download upstream Obsidian release assets
+        run: |
+          VERSION=$(grep -E '^Version:' obsidian.spec | awk '{print $2}')
+          echo "Preparing sources for Obsidian ${VERSION}..."
+          
+          mkdir -p rpmbuild/SOURCES rpmbuild/SPECS rpmbuild/BUILD rpmbuild/RPMS rpmbuild/SRPMS
+          
+          X86_URL="https://github.com/obsidianmd/obsidian-releases/releases/download/v${VERSION}/obsidian-${VERSION}.tar.gz"
+          ARM_URL="https://github.com/obsidianmd/obsidian-releases/releases/download/v${VERSION}/obsidian-${VERSION}-arm64.tar.gz"
+          
+          echo "Downloading x86_64 tarball..."
+          curl -fLC - -o "rpmbuild/SOURCES/obsidian-${VERSION}.tar.gz" "${X86_URL}"
+          
+          echo "Downloading aarch64 tarball..."
+          curl -fLC - -o "rpmbuild/SOURCES/obsidian-${VERSION}-arm64.tar.gz" "${ARM_URL}"
+          
+          cp obsidian.desktop rpmbuild/SOURCES/
+          cp obsidian.spec rpmbuild/SPECS/
+
+      - name: Build Source RPM (SRPM)
+        run: |
+          rpmbuild -bs \
+            --define "_topdir ${GITHUB_WORKSPACE}/rpmbuild" \
+            rpmbuild/SPECS/obsidian.spec
+
+      - name: Build Binary RPM (x86_64)
+        run: |
+          rpmbuild -bb \
+            --target x86_64 \
+            --define "_topdir ${GITHUB_WORKSPACE}/rpmbuild" \
+            rpmbuild/SPECS/obsidian.spec
+
+      - name: List built RPM packages
+        run: |
+          echo "=== Built Packages ==="
+          ls -lh rpmbuild/SRPMS/
+          ls -lh rpmbuild/RPMS/*
+
+      - name: Move packages to dist/
+        run: |
+          mkdir -p dist
+          cp rpmbuild/SRPMS/*.src.rpm dist/
+          cp rpmbuild/RPMS/*/*.rpm dist/
+
+      - name: Upload RPM Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsidian-rpm-packages
+          path: dist/*
+          retention-days: 14
+
+  submit-to-copr:
+    name: Submit SRPM to Fedora Copr
+    needs: build-rpm
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Download built packages
+        uses: actions/download-artifact@v4
+        with:
+          name: obsidian-rpm-packages
+          path: dist
+
+      - name: Check Copr Credentials and Submit
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+          COPR_PROJECT: ${{ vars.COPR_PROJECT || 'obsidian' }}
+          COPR_OWNER: ${{ vars.COPR_OWNER }}
+        run: |
+          if [ -z "${COPR_CONFIG}" ]; then
+            echo "::notice title=Copr Skipped::COPR_CONFIG secret is not configured. Add it in GitHub repository Settings -> Secrets to automatically trigger Copr builds on push."
+            exit 0
+          fi
+
+          echo "Installing copr-cli..."
+          pipx install copr-cli
+
+          mkdir -p ~/.config
+          echo "${COPR_CONFIG}" > ~/.config/copr
+
+          # Extract username automatically from copr config, or fallback to hamz4
+          DETECTED_OWNER=$(grep -E '^[[:space:]]*username[[:space:]]*=' ~/.config/copr | head -n 1 | awk -F'=' '{print $2}' | tr -d ' \r\n')
+          OWNER="${COPR_OWNER:-${DETECTED_OWNER:-hamz4}}"
+          PROJECT="${COPR_PROJECT:-obsidian}"
+
+          SRPM_FILE=$(find dist -name "*.src.rpm" | head -n 1)
+          if [ -z "${SRPM_FILE}" ]; then
+            echo "::error::No SRPM found in artifacts!"
+            exit 1
+          fi
+
+          echo "Submitting ${SRPM_FILE} to Copr project ${OWNER}/${PROJECT}..."
+          copr-cli build --nowait "${OWNER}/${PROJECT}" "${SRPM_FILE}"
+
+  create-github-release:
+    name: Create GitHub Release (Tags only)
+    needs: build-rpm
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download built packages
+        uses: actions/download-artifact@v4
+        with:
+          name: obsidian-rpm-packages
+          path: dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
