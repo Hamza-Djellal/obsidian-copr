@@ -16,12 +16,6 @@ sudo dnf copr enable hamz4/obsidian
 sudo dnf install obsidian
 ```
 
-To update when a new version is released:
-
-```bash
-sudo dnf upgrade obsidian
-```
-
 ---
 
 ## Features
