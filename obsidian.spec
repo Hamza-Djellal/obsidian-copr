@@ -2,7 +2,7 @@
 %global __strip /bin/true
 
 Name:           obsidian
-Version:        1.14.5
+Version:        1.15.0
 Release:        1%{?dist}
 Summary:        Obsidian - A powerful knowledge base on top of local Markdown files
 
@@ -115,5 +115,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/obsidian.desktop
 %{_datadir}/icons/hicolor/512x512/apps/obsidian.png
 
 %changelog
+* Tue Nov 03 2026 Automation <bot@example.com> - 1.15.0-1
+- Update to upstream Obsidian 1.15.0
 * Thu Oct 29 2026 Hamza <user@example.com> - 1.14.5-1
 - Initial Fedora Copr package for Obsidian 1.14.5
